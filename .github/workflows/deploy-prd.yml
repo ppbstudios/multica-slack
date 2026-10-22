@@ -1,0 +1,80 @@
+name: Deploy (prd)
+
+# main 에 push 되면 이미지를 빌드해 ECR 에 올리고 ECS 서비스를 재배포한다.
+# 인프라(ECR, ECS 서비스)는 ppbstudios/iac-terraform services/multica-slack/prd-seoul 에 있다.
+
+on:
+  push:
+    branches: ["main"]
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+# Slack 앱에 소켓은 하나만 열어야 하니 배포도 한 번에 하나만 돈다
+concurrency:
+  group: deploy-prd
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-northeast-2
+  AWS_ROLE_ARN: arn:aws:iam::282059277666:role/Github_Action_Role
+  ECR_REPOSITORY: multica-slack-prd
+  ECS_CLUSTER: ppb-prd
+  ECS_SERVICE: multica-slack-prd
+
+jobs:
+  deploy:
+    name: Build, push, deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          role-session-name: Github_Action_multica_slack
+          role-skip-session-tagging: true
+          role-duration-seconds: 3600
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 태스크 정의는 :latest 를 가리킨다. 커밋 SHA 태그는 롤백용으로 같이 남긴다.
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Redeploy ECS service
+        run: |
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --force-new-deployment \
+            --query 'service.deployments[0].id' \
+            --output text
+
+      - name: Wait for service to stabilize
+        run: |
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE"
