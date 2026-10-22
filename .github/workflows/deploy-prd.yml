@@ -22,7 +22,6 @@ concurrency:
 
 env:
   AWS_REGION: ap-northeast-2
-  AWS_ROLE_ARN: arn:aws:iam::282059277666:role/Github_Action_Role
   ECR_REPOSITORY: multica-slack-prd
   ECS_CLUSTER: ppb-prd
   ECS_SERVICE: multica-slack-prd
@@ -39,7 +38,8 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-region: ${{ env.AWS_REGION }}
-          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          # ppb-hub 등 다른 레포와 같은 레포 시크릿 (GitHub OIDC 역할 ARN)
+          role-to-assume: ${{ secrets.GITHUBACTIONARN }}
           role-session-name: Github_Action_multica_slack
           role-skip-session-tagging: true
           role-duration-seconds: 3600
